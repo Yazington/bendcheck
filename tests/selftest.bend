@@ -70,11 +70,23 @@ def shrink_list(xs: +List<U32>) -> +List<+List<U32>>:
 def gen_list() -> Q.Gen(+List<U32>):
   Q.Gen.list(~U32, ~Q.Gen.u32())
 
+# One checker per input type fixes its generator, shrinker and printer, so
+# each property below is checked in one short line.
+
+def check_pairs(~prop: Q.Both<U32, U32> -> Q.Verdict, name: String, seed: U32) -> IO(Bool):
+  Q.Check.prop(~Q.Both<U32, U32>, ~gen_u32s(), ~prop, ~shrink_u32s, ~show_u32s, name, 1000n, seed)
+
+def check_u32(~prop: U32 -> Q.Verdict, name: String, seed: U32) -> IO(Bool):
+  Q.Check.prop(~U32, ~Q.Gen.u32(), ~prop, ~Q.Shrink.u32, ~U32.show, name, 1000n, seed)
+
+def check_list(~prop: +List<U32> -> Q.Verdict, name: String, seed: U32) -> IO(Bool):
+  Q.Check.prop(~+List<U32>, ~gen_list(), ~prop, ~shrink_list, ~show_list, name, 1000n, seed)
+
 def main() -> IO(Unit):
   do IO<Unit>:
-    a : Bool <- Q.Check.prop(~Q.Both<U32, U32>, ~gen_u32s(), ~add_comm, ~shrink_u32s, ~show_u32s, "add_comm", 1000n, 1)
-    b : Bool <- Q.Check.prop(~Q.Both<U32, U32>, ~gen_u32s(), ~div_mod, ~shrink_u32s, ~show_u32s, "div_mod", 1000n, 2)
-    c : Bool <- Q.Check.prop(~U32, ~Q.Gen.u32(), ~below_1000, ~Q.Shrink.u32, ~U32.show, "below_1000 (false)", 1000n, 3)
-    d : Bool <- Q.Check.prop(~Q.Both<U32, U32>, ~gen_u32s(), ~add_grows, ~shrink_u32s, ~show_u32s, "add_grows (false)", 1000n, 4)
-    e : Bool <- Q.Check.prop(~+List<U32>, ~gen_list(), ~rev_id, ~shrink_list, ~show_list, "rev_id (false)", 1000n, 5)
+    a : Bool <- check_pairs(~add_comm, "add_comm", 1)
+    b : Bool <- check_pairs(~div_mod, "div_mod", 2)
+    c : Bool <- check_u32(~below_1000, "below_1000 (false)", 3)
+    d : Bool <- check_pairs(~add_grows, "add_grows (false)", 4)
+    e : Bool <- check_list(~rev_id, "rev_id (false)", 5)
     Q.Check.summary([a, b, c, d, e])

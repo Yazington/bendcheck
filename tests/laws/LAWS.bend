@@ -63,7 +63,8 @@ law append_assoc:
   for xs: List<a, A>
   for ys: List<a, A>
   for zs: List<a, A>
-  {List.append(a, A, List.append(a, A, xs, ys), zs) == List.append(a, A, xs, List.append(a, A, ys, zs)) : List<a, A>}
+  {List.append(a, A, List.append(a, A, xs, ys), zs)
+    == List.append(a, A, xs, List.append(a, A, ys, zs)) : List<a, A>}
 
 # FALSE: reversing an append keeps the order (smallest: ([0], [1]))
 law reverse_append_draft:
@@ -71,7 +72,8 @@ law reverse_append_draft:
   for -A: Kind(a)
   for xs: List<a, A>
   for ys: List<a, A>
-  {List.reverse(a, A, List.append(a, A, xs, ys)) == List.append(a, A, List.reverse(a, A, xs), List.reverse(a, A, ys)) : List<a, A>}
+  {List.reverse(a, A, List.append(a, A, xs, ys))
+    == List.append(a, A, List.reverse(a, A, xs), List.reverse(a, A, ys)) : List<a, A>}
 
 # TRUE: a set index reads back, when in range (a Maybe claim under a precondition)
 law get_set:
@@ -98,7 +100,8 @@ law concat_append:
   for -A: Kind(a)
   for xss: List<a, List<a, A>>
   for yss: List<a, List<a, A>>
-  {List.concat(a, A, List.append(a, List<a, A>, xss, yss)) == List.append(a, A, List.concat(a, A, xss), List.concat(a, A, yss)) : List<a, A>}
+  {List.concat(a, A, List.append(a, List<a, A>, xss, yss))
+    == List.append(a, A, List.concat(a, A, xss), List.concat(a, A, yss)) : List<a, A>}
 
 # TRUE: binding a Maybe to Some changes nothing
 law maybe_bind_some:

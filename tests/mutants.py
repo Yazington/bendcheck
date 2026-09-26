@@ -7,8 +7,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUTANTS = [
     ("runner treats a failure as a pass", "check.bend",
-     "            case Fails{}:\n              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Shrinking{1n+done, x, shrink(x), 0n})",
-     "            case Fails{}:\n              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Next{1n+done, skipped, left, (i + 1 : U32), r})"),
+     "              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, "
+     "Shrinking{1n+done, x, shrink(x), 0n})",
+     "              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, "
+     "Next{1n+done, skipped, left, i, r})"),
     ("U32 shrinker gives up", "check.bend",
      "  +y = x\n  Shrink.u32.go(33n, U32.is_zero(y), y, y)", "  Nil{}"),
     ("random stream never advances", "check.bend",
@@ -19,8 +21,10 @@ MUTANTS = [
     ("list shrinker never drops elements", "check.bend",
      "      Nil{} <> t <> List.cat(", "      List.cat("),
     ("shrinking keeps a passing candidate", "check.bend",
-     "            case Holds{}:\n              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Shrinking{done, x, rest, steps})",
-     "            case Holds{}:\n              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Shrinking{done, c, shrink(c), 1n+steps})"),
+     "              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, "
+     "Shrinking{done, x, rest, steps})",
+     "              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, "
+     "Shrinking{done, c, shrink(c), 1n+steps})"),
 ]
 
 
@@ -34,7 +38,8 @@ def main():
             if old not in src:
                 print(f"STALE    {name}"); bad += 1; continue
             open(os.path.join(d, f), "w").write(src.replace(old, new, 1))
-            r = subprocess.run([sys.executable, os.path.join(d, "tests", "run.py")], capture_output=True, text=True, timeout=900)
+            r = subprocess.run([sys.executable, os.path.join(d, "tests", "run.py")],
+                               capture_output=True, text=True, timeout=900)
             if r.returncode == 0:
                 print(f"SURVIVED {name}"); bad += 1
             else:

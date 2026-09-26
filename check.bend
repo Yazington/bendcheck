@@ -289,7 +289,9 @@ def List.cat(~A: Data, xs: +List<A>, ys: +List<A>) -> +List<A>:
       h <> List.cat(~A, t, ys)
 
 # shrink the left, then the right
-def Shrink.pair(~A: Data, ~B: Data, ~sa: A -> +List<A>, ~sb: B -> +List<B>, p: Both<A, B>) -> +List<Both<A, B>>:
+def Shrink.pair(
+  ~A: Data, ~B: Data, ~sa: A -> +List<A>, ~sb: B -> +List<B>, p: Both<A, B>
+) -> +List<Both<A, B>>:
   Both{a0, b0} = p
   +a = a0
   +b = b0
@@ -315,7 +317,9 @@ def Shrink.list(~A: Data, ~s: A -> +List<A>, xs: +List<A>) -> +List<+List<A>>:
     case Nil{}:
       Nil{}
     case Con{+h, +t}:
-      Nil{} <> t <> List.cat(~(+List<A>), Shrink.list.heads(~A, s(h), t), Shrink.list.cons(~A, h, Shrink.list(~A, ~s, t)))
+      +heads = Shrink.list.heads(~A, s(h), t)
+      +tails = Shrink.list.cons(~A, h, Shrink.list(~A, ~s, t))
+      Nil{} <> t <> List.cat(~(+List<A>), heads, tails)
 
 # Showing
 # =======
@@ -406,8 +410,10 @@ def Check.stop(~A: Data, ~show: A -> String, st: St<A>) -> Report:
     case Retest{done, x, c, rest, steps, v}:
       Failed{done, steps, show(x)}
 
-def Check.go(~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
-  fuel: Nat, st: St<A>) -> Report:
+def Check.go(
+  ~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
+  fuel: Nat, st: St<A>
+) -> Report:
   match fuel:
     case 0n:
       Check.stop(~A, ~show, st)
@@ -423,13 +429,16 @@ def Check.go(~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>
         case Drawn{done, skipped, left, i, xr}:
           Both{x0, r} = xr
           +x = x0
-          Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Tested{done, skipped, left, i, r, x, prop(x)})
+          Check.go(~A, ~gen, ~prop, ~shrink, ~show, f,
+            Tested{done, skipped, left, i, r, x, prop(x)})
         case Tested{done, skipped, left, i, r, +x, v}:
           match v:
             case Holds{}:
-              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Next{1n+done, skipped, left, (i + 1 : U32), r})
+              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f,
+                Next{1n+done, skipped, left, (i + 1 : U32), r})
             case Skip{}:
-              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Next{done, 1n+skipped, 1n+left, (i + 1 : U32), r})
+              Check.go(~A, ~gen, ~prop, ~shrink, ~show, f,
+                Next{done, 1n+skipped, 1n+left, (i + 1 : U32), r})
             case Fails{}:
               Check.go(~A, ~gen, ~prop, ~shrink, ~show, f, Shrinking{1n+done, x, shrink(x), 0n})
         case Shrinking{done, x, cands, steps}:
@@ -449,8 +458,10 @@ def Check.go(~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>
 
 # test prop on count inputs from gen; skipped inputs are redrawn, up to
 # ten skips per test
-def Check.run(~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
-  +count: Nat, seed: U32) -> Report:
+def Check.run(
+  ~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
+  +count: Nat, seed: U32
+) -> Report:
   Check.go(~A, ~gen, ~prop, ~shrink, ~show, Nat.add(Nat.mul(count, 40n), 20000n),
     Next{0n, 0n, count, 0, Rand.new(seed)})
 
@@ -469,17 +480,21 @@ def Check.print(name: String, seed: U32, rep: Report) -> IO(Bool):
         return True{}
     case Failed{n, k, input}:
       do IO<Bool>:
-        IO.print("  FAILED  " ++ name ++ " after " ++ Nat.show(n) ++ " tests, " ++ Nat.show(k) ++ " shrinks")
+        IO.print("  FAILED  " ++ name ++ " after " ++ Nat.show(n) ++ " tests, "
+          ++ Nat.show(k) ++ " shrinks")
         IO.print("          counterexample: " ++ input)
         IO.print("          seed: " ++ U32.show(seed))
         return False{}
     case GaveUp{n, s}:
       do IO<Bool>:
-        IO.print("  GAVE UP " ++ name ++ ": " ++ Nat.show(n) ++ " tests, " ++ Nat.show(s) ++ " skipped")
+        IO.print("  GAVE UP " ++ name ++ ": " ++ Nat.show(n) ++ " tests, "
+          ++ Nat.show(s) ++ " skipped")
         return False{}
 
-def Check.prop(~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
-  name: String, count: Nat, +seed: U32) -> IO(Bool):
+def Check.prop(
+  ~A: Data, ~gen: Gen(A), ~prop: A -> Verdict, ~shrink: A -> +List<A>, ~show: A -> String,
+  name: String, count: Nat, +seed: U32
+) -> IO(Bool):
   Check.print(name, seed, Check.run(~A, ~gen, ~prop, ~shrink, ~show, count, seed))
 
 def Check.count_failed(bs: +List<Bool>) -> Nat:

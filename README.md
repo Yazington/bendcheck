@@ -105,6 +105,13 @@ parts can be reused and nested pairs need no annotations.
   lambdas like `~(w => Q.Shrink.word(8n, w))`.
 - Take plain parameters and rebind to reuse: `def p(x: U32) -> Q.Verdict:`,
   then `+y = x` inside.
+- Write one checker per input type, fixing its generator, shrinker and
+  printer, so each property is one short line (see `tests/selftest.bend`):
+
+  ```python
+  def check_u32(~prop: U32 -> Q.Verdict, name: String, seed: U32) -> IO(Bool):
+    Q.Check.prop(~U32, ~Q.Gen.u32(), ~prop, ~Q.Shrink.u32, ~U32.show, name, 1000n, seed)
+  ```
 - Inputs must be `Data`: lists as `+List<A>`, pairs as `Q.Both<A, B>`.
 - The runner is a single state machine with fuel, because Bend has no mutual
   recursion; it always terminates, and on running out of fuel mid-shrink it

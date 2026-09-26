@@ -213,14 +213,16 @@ def {nm}(xs: {T}, ys: {T}) -> Bool:
             d, g, sh, w = self.kit(s[2])
             v = self.fresh("lc_l")
             return (f"List<&2, {d}>", f"BC.Gen.list(~{d}, ~{g})",
-                    f"({v} => BC.Shrink.list(~{d}, ~{sh}, {v}))", f"({v} => BC.Show.list(~{d}, ~{w}, {v}))")
+                    f"({v} => BC.Shrink.list(~{d}, ~{sh}, {v}))",
+                    f"({v} => BC.Show.list(~{d}, ~{w}, {v}))")
         if s[0] == "maybe":
             if s[1] == "&1":
                 raise Unsupported(f"affine Maybe: {t}")
             d, g, sh, w = self.kit(s[2])
             v = self.fresh("lc_m")
             return (f"Maybe<&2, {d}>", f"BC.Gen.maybe(~{d}, ~{g})",
-                    f"({v} => BC.Shrink.maybe(~{d}, ~{sh}, {v}))", f"({v} => BC.Show.maybe(~{d}, ~{w}, {v}))")
+                    f"({v} => BC.Shrink.maybe(~{d}, ~{sh}, {v}))",
+                    f"({v} => BC.Show.maybe(~{d}, ~{w}, {v}))")
         b = s[1]
         if b == "U32":
             return b, "BC.Gen.u32()", "BC.Shrink.u32", "U32.show"
@@ -231,7 +233,8 @@ def {nm}(xs: {T}, ys: {T}) -> Bool:
         m = re.fullmatch(r"Word\((\d+n)\)", b)
         if m:
             k, v = m.group(1), self.fresh("lc_w")
-            return b, f"BC.Gen.word({k})", f"({v} => BC.Shrink.word({k}, {v}))", f"({v} => BC.Show.word({k}, {v}))"
+            return (b, f"BC.Gen.word({k})", f"({v} => BC.Shrink.word({k}, {v}))",
+                    f"({v} => BC.Show.word({k}, {v}))")
         raise Unsupported(f"no generator for type {b}")
 
     def linear(self, t):
@@ -308,7 +311,9 @@ def assignments(ws, widths):
     if len(ws) == 1:
         return [{ws[0]: f"{w}n"} for w in widths]
     combos = [tuple([w] * len(ws)) for w in widths]
-    combos += [tuple(widths[(i + k) % len(widths)] for k in range(len(ws))) for i in range(len(widths))]
+    # and each width against its neighbours
+    combos += [tuple(widths[(i + k) % len(widths)] for k in range(len(ws)))
+               for i in range(len(widths))]
     seen, out = set(), []
     for c in combos:
         if c not in seen:
@@ -317,22 +322,50 @@ def assignments(ws, widths):
     return out
 
 
+def nat_sum(s):
+    """Nat.add(y, v) or (y + v : Nat) -> (y, v), else None"""
+    s = s.strip()
+    args = call(s, "Nat.add")
+    if args and len(args) == 2:
+        return args[0], args[1]
+    if s.startswith("(") and s.endswith(")") and call("f" + s, "f"):
+        inner = top_split(s[1:-1], " : ")
+        if len(inner) == 2 and inner[1].strip() == "Nat":
+            terms = top_split(inner[0], " + ")
+            if len(terms) >= 2:
+                return " + ".join(terms[:-1]).strip(), terms[-1].strip()
+    return None
+
+
+def nat_term(t):
+    """t as a Nat term on its own: operators inside parentheses need their
+    annotation back once the outer (.. : Nat) is gone"""
+    t = t.strip()
+    if " + " in t or " * " in t:
+        body = t[1:-1] if t.startswith("(") and t.endswith(")") and call("f" + t, "f") else t
+        if len(top_split(body, " : ")) == 1:
+            return f"({body} : Nat)"
+    return t
+
+
 def solve(hyps, free):
-    """Witnesses for Nat parameters fixed by a hypothesis: {v: expr}."""
+    """Witnesses for Nat parameters fixed by a hypothesis: {v: expr}, for
+    {X == Y + v : Nat} (v := X - Y) and {1 + (E + v) == P : Nat}
+    (v := P - 1 - E), with + written either as Nat.add or as an operator."""
     sol = {}
     for l, r, t, neg in hyps:
         if t.strip() != "Nat" or neg:
             continue
         for x, y in ((l, r), (r, l)):
-            args = call(y, "Nat.add")
-            if args and len(args) == 2 and args[1] in free and args[1] not in sol \
-                    and not mentions(x, args[1]) and not mentions(args[0], args[1]):
-                sol[args[1]] = f"Nat.sub({x}, {args[0]})"
+            sm = nat_sum(y)
+            if sm and sm[1] in free and sm[1] not in sol and not mentions(x, sm[1]) \
+                    and not mentions(sm[0], sm[1]):
+                sol[sm[1]] = f"Nat.sub({nat_term(x)}, {nat_term(sm[0])})"
             m = re.fullmatch(r"1n\+(.*)", x.strip())
-            args = call(m.group(1), "Nat.add") if m else None
-            if args and len(args) == 2 and args[1] in free and args[1] not in sol \
-                    and not mentions(y, args[1]) and not mentions(args[0], args[1]):
-                sol[args[1]] = f"Nat.sub(Nat.sub({y}, 1n), {args[0]})"
+            sm = nat_sum(m.group(1)) if m else None
+            if sm and sm[1] in free and sm[1] not in sol and not mentions(y, sm[1]) \
+                    and not mentions(sm[0], sm[1]):
+                sol[sm[1]] = f"Nat.sub(Nat.sub({nat_term(y)}, 1n), {nat_term(sm[0])})"
     return sol
 
 
@@ -361,7 +394,8 @@ def build(ctx, idx, name, params, claim, env):
     goal = ctx.eq(t, l, r)
     if neg:
         goal = f"Bool.not({goal})"
-    pre = [f"Bool.not({ctx.eq(ht, hl, hr)})" if hn else ctx.eq(ht, hl, hr) for hl, hr, ht, hn in hyps]
+    pre = [f"Bool.not({ctx.eq(ht, hl, hr)})" if hn else ctx.eq(ht, hl, hr)
+           for hl, hr, ht, hn in hyps]
     T, gen, shr, shw = ctx.combine([ctx.kit(t) for n, t in drawn])
 
     # take the nested input apart into the law's own names
@@ -396,7 +430,8 @@ def lc_prop_{idx}(inp: {T}) -> BC.Verdict:
 {body}
   {verdict}
 """
-    run = f'BC.Check.prop(~{T}, ~lc_gen_{idx}(), ~lc_prop_{idx}, ~lc_shrink_{idx}, ~lc_show_{idx}, "{label}", COUNT, SEED)'
+    run = (f"BC.Check.prop(~{T}, ~lc_gen_{idx}(), ~lc_prop_{idx}, ~lc_shrink_{idx}, "
+           f'~lc_show_{idx}, "{label}", COUNT, SEED)')
     return label, src, run
 
 
@@ -448,13 +483,15 @@ def main():
 
     rel = os.path.relpath(CHECK, root)
     rel = rel if rel.startswith(".") else "./" + rel
-    body = "\n".join(f"    r{i} : Bool <- {run.replace('COUNT', f'{a.count}n').replace('SEED', str(a.seed))}"
-                     for i, (label, run) in enumerate(runs))
+    calls = [run.replace("COUNT", f"{a.count}n").replace("SEED", str(a.seed))
+             for label, run in runs]
+    body = "\n".join(f"    r{i} : Bool <- {c}" for i, c in enumerate(calls))
     helpers = "".join(src for name, src in ctx.helpers.values())
     src = ("# generated by lawcheck: do not edit\n\n"
            + "\n".join([l for l in imports if " as BC" not in l] + [f"import {rel} as BC"]) + "\n"
            + CMP_EQ + helpers + "".join(defs)
-           + f"\ndef main() -> IO(Unit):\n  do IO<Unit>:\n{body}\n    IO.print(\"lawcheck: done\")\n")
+           + "\ndef main() -> IO(Unit):\n  do IO<Unit>:\n"
+           + f"{body}\n    IO.print(\"lawcheck: done\")\n")
     gen_path = os.path.join(root, "lawcheck_run.bend")
     out = ""
     if runs:
@@ -462,7 +499,8 @@ def main():
         tmp = tempfile.mkdtemp()
         keep = a.keep
         try:
-            r = subprocess.run([BEND, gen_path, "-o", os.path.join(tmp, "lc")], capture_output=True, text=True, env=ENV)
+            r = subprocess.run([BEND, gen_path, "-o", os.path.join(tmp, "lc")],
+                               capture_output=True, text=True, env=ENV)
             if r.returncode != 0:
                 print(r.stdout[-3000:] + r.stderr[-3000:])
                 print(f"lawcheck: the generated tests do not build (kept at {gen_path})")
@@ -480,8 +518,8 @@ def main():
     passed = out.count("  ok      ")
     for name, why in skipped:
         print(f"  n/a     {name}: {why}")
-    print(f"lawcheck: {passed} passed, {failed} failed, {gave_up} gave up (precondition rarely held), "
-          f"{len(skipped)} not testable")
+    print(f"lawcheck: {passed} passed, {failed} failed, "
+          f"{gave_up} gave up (precondition rarely held), {len(skipped)} not testable")
     return 1 if failed else 0
 
 
