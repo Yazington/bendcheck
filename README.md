@@ -10,6 +10,17 @@ every law in a `LAWS.bend` file with no test code at all.
 
 Built against Bend 2.0.28. `./check.sh` runs every check.
 
+## Install
+
+From BendHub:
+
+```python
+import 0x738b30530890e825e0ab81092b94cbfc/check.bend as Q
+```
+
+or clone this repo and `import ./bendcheck/check.bend as Q`. `lawcheck` needs
+the clone (it is a Python script that generates and runs Bend).
+
 ## A property
 
 ```python
