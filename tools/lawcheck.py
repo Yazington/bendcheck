@@ -215,7 +215,12 @@ def {nm}(xs: {T}, ys: {T}) -> Bool:
             return (f"List<&2, {d}>", f"BC.Gen.list(~{d}, ~{g})",
                     f"({v} => BC.Shrink.list(~{d}, ~{sh}, {v}))", f"({v} => BC.Show.list(~{d}, ~{w}, {v}))")
         if s[0] == "maybe":
-            raise Unsupported(f"no generator for {t}")
+            if s[1] == "&1":
+                raise Unsupported(f"affine Maybe: {t}")
+            d, g, sh, w = self.kit(s[2])
+            v = self.fresh("lc_m")
+            return (f"Maybe<&2, {d}>", f"BC.Gen.maybe(~{d}, ~{g})",
+                    f"({v} => BC.Shrink.maybe(~{d}, ~{sh}, {v}))", f"({v} => BC.Show.maybe(~{d}, ~{w}, {v}))")
         b = s[1]
         if b == "U32":
             return b, "BC.Gen.u32()", "BC.Shrink.u32", "U32.show"

@@ -51,6 +51,7 @@ expect = {
     "nat_add_sub": "ok",
     "append_assoc": "ok", "reverse_append_draft": "([0], [1])", "get_set": "ok",
     "get_set_unbounded": "([], (0, 0))", "concat_append": "ok",
+    "maybe_bind_some": "ok", "maybe_bind_none": "Some(0)",
 }
 for seed in ("1", "7"):
     r = run([sys.executable, "tools/lawcheck.py", "tests/laws/LAWS.bend", "--widths", "1,3,8", "--seed", seed])

@@ -149,6 +149,20 @@ def Gen.list.n(~A: Data, ~g: Gen(A), n: Nat) -> Gen(+List<A>):
         xs : +List<A> <- Gen.list.n(~A, ~g, p)
         return x <> xs
 
+def Gen.maybe.pick(-A: Data, some: Bool, x: A) -> Maybe<&2, A>:
+  match some:
+    case True{}:
+      Some{x}
+    case False{}:
+      None{}
+
+# None one draw in four, else Some of g
+def Gen.maybe(~A: Data, ~g: Gen(A)) -> Gen(Maybe<&2, A>):
+  do Gen<Maybe<&2, A>>:
+    k : U32 <- Gen.bits
+    x : A <- g
+    return Gen.maybe.pick(A, U32.is_ne((k .&. 3 : U32), 0), x)
+
 # a list of up to size elements
 def Gen.list(~A: Data, ~g: Gen(A)) -> Gen(+List<A>):
   do Gen<+List<A>>:
@@ -238,6 +252,21 @@ def Shrink.word(+n: Nat, w: Word(n)) -> +List<Word(n)>:
   +v = w
   Shrink.word.nonzero(n, v, Nat.is_eq(Word.to_nat(n, v), 0n))
 
+def Shrink.maybe.some(~A: Data, xs: +List<A>) -> +List<Maybe<&2, A>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      Some{h} <> Shrink.maybe.some(~A, t)
+
+# None, then Some of a smaller value
+def Shrink.maybe(~A: Data, ~s: A -> +List<A>, m: Maybe<&2, A>) -> +List<Maybe<&2, A>>:
+  match m:
+    case None{}:
+      Nil{}
+    case Some{x}:
+      None{} <> Shrink.maybe.some(~A, s(x))
+
 def Shrink.pair.l(~A: Data, ~B: Data, +b: B, xs: +List<A>) -> +List<Both<A, B>>:
   match xs:
     case Nil{}:
@@ -308,6 +337,13 @@ def Show.list(~A: Data, ~s: A -> String, xs: +List<A>) -> String:
       "[]"
     case Con{h, t}:
       "[" ++ s(h) ++ Show.list.tail(~A, ~s, t)
+
+def Show.maybe(~A: Data, ~s: A -> String, m: Maybe<&2, A>) -> String:
+  match m:
+    case None{}:
+      "None"
+    case Some{x}:
+      "Some(" ++ s(x) ++ ")"
 
 # a word by its value
 def Show.word(n: Nat, w: Word(n)) -> String:

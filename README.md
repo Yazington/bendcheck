@@ -81,15 +81,16 @@ fails in under a second at `([0], [1])`; the right law swaps the parts, and
 that one was then proved. On [wordlib](https://github.com/Yazington/wordlib)'s
 proved laws, lawcheck runs 157 properties for the 44 word laws (153 pass, 4
 give up because their precondition, two random words with equal values say,
-almost never holds) and 16 for the list laws (all pass).
+almost never holds) and 26 for the list laws, including that Base's merge sort
+is a permutation (all pass).
 
 ## The pieces
 
 | | |
 |---|---|
-| **Generators** (`Gen(A)`, a monad: `do Gen<A>:`) | `u32` (one draw in eight an edge value: 0, 2^31, 2^32-1 and neighbours), `below(n)`, `small`, `nat`, `bool`, `word(n)`, `pair`, `list`, `map` |
-| **Shrinkers** (`A -> +List<A>`, most aggressive first) | `u32` (binary search towards 0), `nat`, `bool`, `word` (zero, half, one bit fewer), `pair`, `list` (empty, tail, smaller head, smaller tail), `none` |
-| **Printers** | `Show.pair`, `Show.list`, `Show.word`, plus Base's `U32.show`, `Nat.show`, `Bool.show` |
+| **Generators** (`Gen(A)`, a monad: `do Gen<A>:`) | `u32` (one draw in eight an edge value: 0, 2^31, 2^32-1 and neighbours), `below(n)`, `small`, `nat`, `bool`, `word(n)`, `pair`, `list`, `maybe`, `map` |
+| **Shrinkers** (`A -> +List<A>`, most aggressive first) | `u32` (binary search towards 0), `nat`, `bool`, `word` (zero, half, one bit fewer), `pair`, `list` (empty, tail, smaller head, smaller tail), `maybe` (None, then smaller), `none` |
+| **Printers** | `Show.pair`, `Show.list`, `Show.maybe`, `Show.word`, plus Base's `U32.show`, `Nat.show`, `Bool.show` |
 | **Verdicts** | `Check.holds(b)`, and `Check.when(pre, b)`, which skips inputs failing `pre` |
 | **Running** | `Check.run` (a `Report`), `Check.prop` (prints, returns `Bool`), `Check.summary` |
 

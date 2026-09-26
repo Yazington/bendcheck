@@ -99,3 +99,13 @@ law concat_append:
   for xss: List<a, List<a, A>>
   for yss: List<a, List<a, A>>
   {List.concat(a, A, List.append(a, List<a, A>, xss, yss)) == List.append(a, A, List.concat(a, A, xss), List.concat(a, A, yss)) : List<a, A>}
+
+# TRUE: binding a Maybe to Some changes nothing
+law maybe_bind_some:
+  for m: Maybe<&2, U32>
+  {Maybe.bind(&2, U32, U32, m, x => Some{x}) == m : Maybe<&2, U32>}
+
+# FALSE: binding a Maybe to None changes nothing (smallest: Some(0))
+law maybe_bind_none:
+  for m: Maybe<&2, U32>
+  {Maybe.bind(&2, U32, U32, m, x => None{}) == m : Maybe<&2, U32>}
