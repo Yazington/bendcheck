@@ -1,0 +1,4 @@
+build/
+lawcheck_run.bend
+__pycache__/
+.DS_Store
