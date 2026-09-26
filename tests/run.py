@@ -49,6 +49,8 @@ expect = {
     # the minimal counterexample is symmetric: either side may keep the 2
     "cmp_low_bit [n=1]": "ok", "cmp_low_bit [n=3]": {"(0, 2)", "(2, 0)"}, "cmp_low_bit [n=8]": {"(0, 2)", "(2, 0)"},
     "nat_add_sub": "ok",
+    "append_assoc": "ok", "reverse_append_draft": "([0], [1])", "get_set": "ok",
+    "get_set_unbounded": "([], (0, 0))", "concat_append": "ok",
 }
 for seed in ("1", "7"):
     r = run([sys.executable, "tools/lawcheck.py", "tests/laws/LAWS.bend", "--widths", "1,3,8", "--seed", seed])

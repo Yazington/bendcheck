@@ -58,8 +58,11 @@ python3 tools/lawcheck.py path/to/LAWS.bend [--count 200] [--seed 1] [--widths 1
 
 Every `law` becomes a property. Its `for` parameters are drawn at random,
 hypotheses (`for h: {L == R : T}`) become preconditions, and the claim is
-checked with its type's equality (`U32`, `Nat`, `Bool`, `Cmp`, `Word(n)`). A
-`Nat` used as a width (`Word(n)`) is fixed at a few sizes. A hypothesis
+checked with its type's equality: `U32`, `Nat`, `Bool`, `Cmp`, `Word(n)`, and
+lists (nested to any depth) and `Maybe` of those. Type parameters are fixed:
+a quantity (`for -a: Quant`) to `&2`, an element type (`for -A: Kind(a)`) to
+`U32` (`--elem` picks another). A `Nat` used as a width (`Word(n)`) is tried
+at a few sizes. A hypothesis
 `{X == Nat.add(Y, v) : Nat}` or `{1n+Nat.add(E, v) == P : Nat}` is solved for
 `v`, so laws like "if `a = b + d` then `a - b = d`" get real tests instead of
 waiting for random luck.
@@ -73,9 +76,12 @@ waiting for random luck.
 lawcheck: 6 passed, 9 failed, 0 gave up (precondition rarely held), 1 not testable
 ```
 
-On [wordlib](https://github.com/Yazington/wordlib)'s 44 proved laws it runs
-157 properties across widths: 153 pass, and 4 give up because their
-precondition (two random words with equal values, say) almost never holds.
+A first draft of a list law, `reverse(xs ++ ys) == reverse xs ++ reverse ys`,
+fails in under a second at `([0], [1])`; the right law swaps the parts, and
+that one was then proved. On [wordlib](https://github.com/Yazington/wordlib)'s
+proved laws, lawcheck runs 157 properties for the 44 word laws (153 pass, 4
+give up because their precondition, two random words with equal values say,
+almost never holds) and 16 for the list laws (all pass).
 
 ## The pieces
 
@@ -110,7 +116,8 @@ parts can be reused and nested pairs need no annotations.
 1. `tests/run.py`: exact expectations. True properties pass; false ones fail
    at their smallest counterexample (`1000`, `[0, 1]`, a pair summing to exactly
    2^32); runs are deterministic; the JS build prints the same bytes as the
-   native one; `lawcheck` passes the true laws in `tests/laws` and fails every
+   native one; `lawcheck` passes the true laws in `tests/laws` (words, generic
+   lists, lists of lists, a `Maybe` claim under a precondition) and fails every
    false one at a minimal input, under two seeds.
 2. `tests/mutants.py`: 6 planted bugs (a runner that ignores failures, a
    shrinker that gives up, a random stream that never advances, inverted

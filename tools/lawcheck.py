@@ -3,16 +3,21 @@
 
 Each `law name:` becomes a bendcheck property. Its `for` parameters are
 drawn at random; hypotheses (`for h: {L == R : T}`) become preconditions;
-the claim `{L == R : T}` is checked with T's equality. A Nat used as a
-width (`Word(n)`) is fixed at a few sizes. A hypothesis of the form
-`{X == Nat.add(Y, v) : Nat}` or `{1n+Nat.add(E, v) == P : Nat}` solves for
-v instead of waiting for random luck.
+the claim `{L == R : T}` is checked with T's equality. Type parameters are
+fixed: a quantity (`for -a: Quant`) to &2 and an element type
+(`for -A: Kind(a)`, `Type` or `Data`) to --elem. A Nat used as a width
+(`Word(n)`) is tried at a few sizes. A hypothesis `{X == Nat.add(Y, v) : Nat}`
+or `{1n+Nat.add(E, v) == P : Nat}` is solved for v instead of waiting for
+random luck.
+
+Types: U32, Nat, Bool, Cmp, Word(n), lists (List<q, T>, +List<T>) and
+Maybe<q, T> of those.
 
 Usage: lawcheck.py LAWS.bend [--count N] [--seed S] [--widths 1,2,3,8,16]
-                             [--only law1,law2] [--keep]
+                             [--elem U32] [--only law1,law2] [--keep]
 Exit status: 1 if any law has a counterexample.
 """
-import argparse, itertools, os, re, shutil, subprocess, sys, tempfile
+import argparse, os, re, shutil, subprocess, sys, tempfile
 
 BEND = os.environ.get("BEND", os.path.expanduser("~/.bend/bin/bend"))
 ENV = {**os.environ, "BEND_NO_TELEMETRY": "1"}
@@ -23,8 +28,8 @@ class Unsupported(Exception):
     pass
 
 
-# Parsing
-# -------
+# Reading laws
+# ------------
 
 def parse(path):
     lines = open(path).read().split("\n")
@@ -45,13 +50,14 @@ def parse(path):
 
 
 def top_split(s, sep):
-    """Split s at top-level occurrences of sep (outside (), [], {})."""
+    """Split s at top-level occurrences of sep (outside (), [], {}, and the
+    <> of a type application like List<a, A>)."""
     out, depth, start, j = [], 0, 0, 0
     while j < len(s):
         ch = s[j]
-        if ch in "([{":
+        if ch in "([{" or (ch == "<" and j > 0 and (s[j - 1].isalnum() or s[j - 1] == "_")):
             depth += 1
-        elif ch in ")]}":
+        elif ch in ")]}" or (ch == ">" and depth > 0 and s[j - 1] not in "=-"):
             depth -= 1
         elif depth == 0 and s.startswith(sep, j):
             out.append(s[start:j])
@@ -68,8 +74,7 @@ def equation(s):
     s = s.strip()
     if not (s.startswith("{") and s.endswith("}")):
         raise Unsupported(f"claim is not an equation: {s[:60]}")
-    inner = s[1:-1]
-    parts = top_split(inner, " : ")
+    parts = top_split(s[1:-1], " : ")
     if len(parts) < 2:
         raise Unsupported("equation without a type")
     body, typ = " : ".join(parts[:-1]), parts[-1].strip()
@@ -85,102 +90,203 @@ def call(s, fn):
     s = s.strip()
     if not (s.startswith(fn + "(") and s.endswith(")")):
         return None
-    args = top_split(s[len(fn) + 1:-1], ",")
-    # the prefix must close exactly at the end
     depth = 0
     for j, ch in enumerate(s[len(fn):]):
         depth += ch in "([{"
         depth -= ch in ")]}"
         if depth == 0 and j < len(s) - len(fn) - 1:
             return None
-    return [a.strip() for a in args]
+    return [a.strip() for a in top_split(s[len(fn) + 1:-1], ",")]
+
+
+def ident(name):
+    return r"(?<![\w.])" + re.escape(name) + r"(?![\w])"
 
 
 def mentions(expr, name):
-    return re.search(r"(?<![\w.])" + re.escape(name) + r"(?![\w])", expr) is not None
+    return re.search(ident(name), expr) is not None
 
 
 def subst(text, env):
     for name, val in env.items():
-        text = re.sub(r"(?<![\w.])" + re.escape(name) + r"(?![\w])", val, text)
+        text = re.sub(ident(name), lambda m: val, text)
     return text
 
 
 # Types
 # -----
 
-def eq_expr(typ, l, r):
-    t = typ.strip()
-    if t == "U32":
-        return f"U32.is_eq({l}, {r})"
-    if t == "Nat":
-        return f"Nat.is_eq({l}, {r})"
-    if t == "Bool":
-        return f"Cmp.is_eq(Bool.cmp({l}, {r}))"
-    if t == "Cmp":
-        return f"lc_cmp_eq({l}, {r})"
-    m = re.fullmatch(r"Word\((.+)\)", t)
+def shape(t):
+    """('list', q, T) | ('maybe', q, T) | ('base', t)"""
+    t = t.strip()
+    m = re.fullmatch(r"\+(List|Maybe)<(.+)>", t)
     if m:
-        return f"Cmp.is_eq(Word.cmp({m.group(1)}, {l}, {r}))"
-    raise Unsupported(f"no equality for type {t}")
-
-
-def kit(typ):
-    """(type, generator, shrinker, printer): the last two are closed
-    function terms, usable as template arguments"""
-    t = typ.strip()
-    if t == "U32":
-        return t, "BC.Gen.u32()", "BC.Shrink.u32", "U32.show"
-    if t == "Nat":
-        return t, "BC.Gen.nat()", "BC.Shrink.nat", "Nat.show"
-    if t == "Bool":
-        return t, "BC.Gen.bool()", "BC.Shrink.bool", "Bool.show"
-    m = re.fullmatch(r"Word\((\d+n)\)", t)
+        return (m.group(1).lower(), "&2", m.group(2).strip())
+    m = re.fullmatch(r"(List|Maybe)<\s*(&[12])\s*,\s*(.+)>", t)
     if m:
-        k = m.group(1)
-        return t, f"BC.Gen.word({k})", f"(lc_w => BC.Shrink.word({k}, lc_w))", f"(lc_w => BC.Show.word({k}, lc_w))"
-    raise Unsupported(f"no generator for type {t}")
+        return (m.group(1).lower(), m.group(2), m.group(3).strip())
+    m = re.fullmatch(r"(List|Maybe)<(.+)>", t)
+    if m:
+        return (m.group(1).lower(), "&1", m.group(2).strip())
+    return ("base", t)
 
 
-def combine(kits):
-    """right-nested pairs of kits"""
-    if len(kits) == 1:
-        return kits[0]
-    t1, g1, s1, w1 = kits[0]
-    t2, g2, s2, w2 = combine(kits[1:])
-    d = len(kits)
-    return (f"BC.Both<{t1}, {t2}>",
-            f"BC.Gen.pair(~{t1}, ~{t2}, ~{g1}, ~{g2})",
-            f"(lc_p{d} => BC.Shrink.pair(~{t1}, ~{t2}, ~{s1}, ~{s2}, lc_p{d}))",
-            f"(lc_p{d} => BC.Show.pair(~{t1}, ~{t2}, ~{w1}, ~{w2}, lc_p{d}))")
+class Ctx:
+    """Collects the helper defs a generated file needs."""
+
+    def __init__(self):
+        self.helpers, self.n = {}, 0
+
+    def fresh(self, base):
+        self.n += 1
+        return f"{base}{self.n}"
+
+    def helper(self, key, make):
+        if key not in self.helpers:
+            name = f"lc_h{len(self.helpers)}"
+            self.helpers[key] = (name, None)
+            self.helpers[key] = (name, make(name))
+        return self.helpers[key][0]
+
+    def data(self, t):
+        """the reusable (Data) form of t"""
+        s = shape(t)
+        if s[0] == "list":
+            return f"List<&2, {self.data(s[2])}>"
+        if s[0] == "maybe":
+            return f"Maybe<&2, {self.data(s[2])}>"
+        return s[1]
+
+    def eq(self, t, l, r):
+        s = shape(t)
+        if s[0] == "base":
+            b = s[1]
+            if b == "U32":
+                return f"U32.is_eq({l}, {r})"
+            if b == "Nat":
+                return f"Nat.is_eq({l}, {r})"
+            if b == "Bool":
+                return f"Cmp.is_eq(Bool.cmp({l}, {r}))"
+            if b == "Cmp":
+                return f"lc_cmp_eq({l}, {r})"
+            m = re.fullmatch(r"Word\((.+)\)", b)
+            if m:
+                return f"Cmp.is_eq(Word.cmp({m.group(1)}, {l}, {r}))"
+            raise Unsupported(f"no equality for type {b}")
+        kind, q, inner = s
+        T = f"{'List' if kind == 'list' else 'Maybe'}<{q}, {inner}>"
+        if kind == "list":
+            name = self.helper("eq " + T, lambda nm: f"""
+def {nm}(xs: {T}, ys: {T}) -> Bool:
+  match xs ys:
+    case Nil{{}} Nil{{}}:
+      True{{}}
+    case Nil{{}} Con{{y, yt}}:
+      False{{}}
+    case Con{{x, xt}} Nil{{}}:
+      False{{}}
+    case Con{{x, xt}} Con{{y, yt}}:
+      Bool.and({self.eq(inner, 'x', 'y')}, {nm}(xt, yt))
+""")
+        else:
+            name = self.helper("eq " + T, lambda nm: f"""
+def {nm}(xs: {T}, ys: {T}) -> Bool:
+  match xs ys:
+    case None{{}} None{{}}:
+      True{{}}
+    case None{{}} Some{{y}}:
+      False{{}}
+    case Some{{x}} None{{}}:
+      False{{}}
+    case Some{{x}} Some{{y}}:
+      {self.eq(inner, 'x', 'y')}
+""")
+        return f"{name}({l}, {r})"
+
+    def kit(self, t):
+        """(Data type, generator, shrinker, printer); the last two are closed
+        function terms, usable as template arguments"""
+        s = shape(t)
+        if s[0] == "list":
+            if s[1] == "&1" and shape(s[2])[0] != "base":
+                raise Unsupported(f"affine list of structured elements: {t}")
+            d, g, sh, w = self.kit(s[2])
+            v = self.fresh("lc_l")
+            return (f"List<&2, {d}>", f"BC.Gen.list(~{d}, ~{g})",
+                    f"({v} => BC.Shrink.list(~{d}, ~{sh}, {v}))", f"({v} => BC.Show.list(~{d}, ~{w}, {v}))")
+        if s[0] == "maybe":
+            raise Unsupported(f"no generator for {t}")
+        b = s[1]
+        if b == "U32":
+            return b, "BC.Gen.u32()", "BC.Shrink.u32", "U32.show"
+        if b == "Nat":
+            return b, "BC.Gen.nat()", "BC.Shrink.nat", "Nat.show"
+        if b == "Bool":
+            return b, "BC.Gen.bool()", "BC.Shrink.bool", "Bool.show"
+        m = re.fullmatch(r"Word\((\d+n)\)", b)
+        if m:
+            k, v = m.group(1), self.fresh("lc_w")
+            return b, f"BC.Gen.word({k})", f"({v} => BC.Shrink.word({k}, {v}))", f"({v} => BC.Show.word({k}, {v}))"
+        raise Unsupported(f"no generator for type {b}")
+
+    def linear(self, t):
+        """a def copying a drawn (Data) list into the affine list type t"""
+        s = shape(t)
+        d = self.data(t)
+        return self.helper("lin " + t, lambda nm: f"""
+def {nm}(xs: {d}) -> List<&1, {s[2]}>:
+  match xs:
+    case Nil{{}}:
+      Nil{{}}
+    case Con{{h, t}}:
+      h <> {nm}(t)
+""")
+
+    def combine(self, kits):
+        """right-nested pairs of kits"""
+        if len(kits) == 1:
+            return kits[0]
+        t1, g1, s1, w1 = kits[0]
+        t2, g2, s2, w2 = self.combine(kits[1:])
+        v = self.fresh("lc_p")
+        return (f"BC.Both<{t1}, {t2}>",
+                f"BC.Gen.pair(~{t1}, ~{t2}, ~{g1}, ~{g2})",
+                f"({v} => BC.Shrink.pair(~{t1}, ~{t2}, ~{s1}, ~{s2}, {v}))",
+                f"({v} => BC.Show.pair(~{t1}, ~{t2}, ~{w1}, ~{w2}, {v}))")
 
 
 def app(f, arg):
-    """apply a closed function term to arg, inlining a lambda"""
+    """apply a closed function term to arg, inlining an outer lambda"""
     m = re.fullmatch(r"\((\w+) => (.*)\)", f, re.S)
     if m:
-        return re.sub(r"(?<![\w.])" + m.group(1) + r"(?![\w])", arg, m.group(2))
+        return re.sub(ident(m.group(1)), lambda _: arg, m.group(2))
     return f"{f}({arg})"
 
 
-# One law, one width assignment -> one property
-# ---------------------------------------------
+# One law, one assignment of widths -> one property
+# -------------------------------------------------
 
-def law_params(body):
-    params, claim = [], []
+def law_params(body, elem):
+    params, claim, fixed = [], [], {}
     for b in body:
         if b.startswith("for "):
             m = re.match(r"for\s+([+-]?)(\w+)\s*:\s*(.*)$", b)
             if not m:
                 raise Unsupported(f"cannot read: {b}")
-            if " where " in m.group(3):
+            n, t = m.group(2), m.group(3).strip()
+            if " where " in t:
                 raise Unsupported("`where` parameters")
-            params.append((m.group(2), m.group(3).strip()))
+            if t == "Quant":
+                fixed[n] = "&2"
+            elif t in ("Type", "Data") or t.startswith("Kind("):
+                fixed[n] = elem
+            else:
+                params.append((n, t))
         elif b.startswith("exs "):
             raise Unsupported("existential (exs)")
         else:
             claim.append(b)
-    return params, " ".join(claim)
+    return params, " ".join(claim), fixed
 
 
 def width_names(params):
@@ -214,18 +320,18 @@ def solve(hyps, free):
             continue
         for x, y in ((l, r), (r, l)):
             args = call(y, "Nat.add")
-            if args and len(args) == 2 and args[1] in free and args[1] not in sol and not mentions(x, args[1]) \
-                    and not mentions(args[0], args[1]):
+            if args and len(args) == 2 and args[1] in free and args[1] not in sol \
+                    and not mentions(x, args[1]) and not mentions(args[0], args[1]):
                 sol[args[1]] = f"Nat.sub({x}, {args[0]})"
             m = re.fullmatch(r"1n\+(.*)", x.strip())
             args = call(m.group(1), "Nat.add") if m else None
-            if args and len(args) == 2 and args[1] in free and args[1] not in sol and not mentions(y, args[1]) \
-                    and not mentions(args[0], args[1]):
+            if args and len(args) == 2 and args[1] in free and args[1] not in sol \
+                    and not mentions(y, args[1]) and not mentions(args[0], args[1]):
                 sol[args[1]] = f"Nat.sub(Nat.sub({y}, 1n), {args[0]})"
     return sol
 
 
-def build(idx, name, params, claim, env):
+def build(ctx, idx, name, params, claim, env):
     params = [(n, subst(t, env)) for n, t in params if n not in env]
     claim = subst(claim, env)
     hyps, vals = [], []
@@ -238,15 +344,22 @@ def build(idx, name, params, claim, env):
     drawn = [(n, t) for n, t in vals if n not in sol]
     if not drawn:
         raise Unsupported("nothing to draw")
+    # an affine list is drawn reusable, then copied at each use
+    uses = {}
+    for n, t in drawn:
+        s = shape(t)
+        if s[0] == "list" and s[1] == "&1":
+            uses[n] = f"{ctx.linear(t)}({n})"
+    claim = subst(claim, uses)
+    hyps = [(subst(l, uses), subst(r, uses), t, ng) for l, r, t, ng in hyps]
     l, r, t, neg = equation(claim)
-    goal = eq_expr(t, l, r)
+    goal = ctx.eq(t, l, r)
     if neg:
         goal = f"Bool.not({goal})"
-    pre = [f"Bool.not({eq_expr(ht, hl, hr)})" if hn else eq_expr(ht, hl, hr) for hl, hr, ht, hn in hyps]
-    kits = [kit(t) for n, t in drawn]
-    T, gen, shr, shw = combine(kits)
+    pre = [f"Bool.not({ctx.eq(ht, hl, hr)})" if hn else ctx.eq(ht, hl, hr) for hl, hr, ht, hn in hyps]
+    T, gen, shr, shw = ctx.combine([ctx.kit(t) for n, t in drawn])
 
-    # unpack the nested input into the law's own names
+    # take the nested input apart into the law's own names
     # (Bend wants every match before the first let)
     lines, lets, cur = [], [], "inp"
     for i, (n, t) in enumerate(drawn):
@@ -302,6 +415,7 @@ def main():
     ap.add_argument("--count", type=int, default=200)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--widths", default="1,2,3,8,16")
+    ap.add_argument("--elem", default="U32", help="element type for type parameters")
     ap.add_argument("--only", default="")
     ap.add_argument("--keep", action="store_true", help="keep the generated .bend file")
     a = ap.parse_args()
@@ -311,14 +425,17 @@ def main():
     root = os.path.dirname(path)
     imports, laws = parse(path)
 
-    defs, runs, skipped = [], [], []
+    ctx, defs, runs, skipped = Ctx(), [], [], []
     for name, body in laws:
         if only and name not in only:
             continue
         try:
-            params, claim = law_params(body)
-            for env in assignments(width_names(params), widths):
-                label, src, run = build(len(runs), name, params, claim, env)
+            params, claim, fixed = law_params(body, a.elem)
+            params = [(n, subst(t, fixed)) for n, t in params]
+            claim = subst(claim, fixed)
+            built = [build(ctx, len(runs) + k, name, params, claim, env)
+                     for k, env in enumerate(assignments(width_names(params), widths))]
+            for label, src, run in built:
                 defs.append(src)
                 runs.append((label, run))
         except Unsupported as e:
@@ -328,23 +445,29 @@ def main():
     rel = rel if rel.startswith(".") else "./" + rel
     body = "\n".join(f"    r{i} : Bool <- {run.replace('COUNT', f'{a.count}n').replace('SEED', str(a.seed))}"
                      for i, (label, run) in enumerate(runs))
-    src = "# generated by lawcheck: do not edit\n\n" + "\n".join(
-        [l for l in imports if " as BC" not in l] + [f"import {rel} as BC"]) + "\n" + CMP_EQ + "".join(defs) + \
-        f"\ndef main() -> IO(Unit):\n  do IO<Unit>:\n{body}\n    IO.print(\"lawcheck: done\")\n"
+    helpers = "".join(src for name, src in ctx.helpers.values())
+    src = ("# generated by lawcheck: do not edit\n\n"
+           + "\n".join([l for l in imports if " as BC" not in l] + [f"import {rel} as BC"]) + "\n"
+           + CMP_EQ + helpers + "".join(defs)
+           + f"\ndef main() -> IO(Unit):\n  do IO<Unit>:\n{body}\n    IO.print(\"lawcheck: done\")\n")
     gen_path = os.path.join(root, "lawcheck_run.bend")
-    open(gen_path, "w").write(src)
-    tmp = tempfile.mkdtemp()
-    try:
-        r = subprocess.run([BEND, gen_path, "-o", os.path.join(tmp, "lc")], capture_output=True, text=True, env=ENV)
-        if r.returncode != 0:
-            print(r.stdout[-3000:] + r.stderr[-3000:])
-            print(f"lawcheck: the generated tests do not build (kept at {gen_path})")
-            return 2
-        out = subprocess.run([os.path.join(tmp, "lc")], capture_output=True, text=True).stdout
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-        if not a.keep and os.path.exists(gen_path):
-            os.remove(gen_path)
+    out = ""
+    if runs:
+        open(gen_path, "w").write(src)
+        tmp = tempfile.mkdtemp()
+        keep = a.keep
+        try:
+            r = subprocess.run([BEND, gen_path, "-o", os.path.join(tmp, "lc")], capture_output=True, text=True, env=ENV)
+            if r.returncode != 0:
+                print(r.stdout[-3000:] + r.stderr[-3000:])
+                print(f"lawcheck: the generated tests do not build (kept at {gen_path})")
+                keep = True
+                return 2
+            out = subprocess.run([os.path.join(tmp, "lc")], capture_output=True, text=True).stdout
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not keep and os.path.exists(gen_path):
+                os.remove(gen_path)
 
     print(out, end="")
     failed = out.count("  FAILED  ")
